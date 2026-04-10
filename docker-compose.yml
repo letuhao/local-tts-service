@@ -1,0 +1,15 @@
+services:
+  tts:
+    build: .
+    ports:
+      - "9880:9880"
+    volumes:
+      - ./models:/app/models
+      - ./voices:/app/voices
+    environment:
+      - TTS_API_KEY=dev_key
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9880/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
