@@ -58,33 +58,50 @@ ruff check .
 ruff format .
 ```
 
-## TTS Engine
+## TTS Engines
 
-- **Model:** Kokoro TTS (82M params) via `kokoro-onnx` package
-- **Model files:** `models/kokoro-v1.0.onnx` (311MB) + `voices/voices-v1.0.bin` (27MB)
-- **Audio encoding:** `static-ffmpeg` (portable, no system install needed) for mp3/wav/opus/flac/aac
-- **Concurrency:** Inference runs in thread pool (`asyncio.to_thread`) to avoid blocking the event loop
-- **Streaming:** Uses `kokoro.create_stream()` to yield audio chunks per sentence
+### Multi-engine architecture
+`EngineManager` routes requests to the correct engine based on voice ID:
+- `af_*`, `am_*`, `bf_*`, etc. → **Kokoro** (9 languages, 54 voices)
+- `vi_VN-*` → **Piper** (Vietnamese)
+
+### Kokoro (primary)
+- **Model:** Kokoro TTS (82M params) via `kokoro-onnx`
+- **Files:** `models/kokoro-v1.0.onnx` (311MB) + `voices/voices-v1.0.bin` (27MB)
+- **Streaming:** `kokoro.create_stream()` yields audio chunks per sentence
 - 54 voices across 9 languages (en-us, en-gb, es, fr, hi, it, ja, pt, zh)
+
+### Piper (Vietnamese)
+- **Model:** Piper TTS via `piper-tts`
+- **Files:** `voices/piper/vi_VN-vais1000-medium.onnx` (61MB) + `.onnx.json`
+- **Streaming:** sentence-splitting based (Piper doesn't natively stream)
+- Vietnamese voices from rhasspy/piper-voices
+
+### Shared
+- **Audio encoding:** `static-ffmpeg` (portable) for mp3/wav/opus/flac/aac
+- **Concurrency:** All inference runs in thread pool (`asyncio.to_thread`)
 
 ## Project Structure
 
 ```
 app/
-  main.py              — FastAPI app + lifespan (model loading)
+  main.py              — FastAPI app + lifespan (engine loading)
   config.py            — Settings via pydantic-settings (env prefix: TTS_)
   routers/
     tts.py             — POST /v1/audio/speech (streaming)
     models.py          — GET /v1/models (scans models/ dir)
-    voices.py          — GET /v1/voices (from loaded engine)
+    voices.py          — GET /v1/voices (from all engines)
     health.py          — GET /health
   services/
-    tts_engine.py      — Kokoro-onnx wrapper, synthesis + streaming
+    engine_manager.py  — Multi-engine router (voice → engine)
+    tts_engine.py      — Kokoro-onnx wrapper
+    piper_engine.py    — Piper TTS wrapper (Vietnamese)
     audio_encoder.py   — PCM-to-format encoding via ffmpeg
   models/
     schemas.py         — Pydantic request/response schemas
 models/                — ONNX model weights (git-ignored)
-voices/                — Voice embedding files (git-ignored)
+voices/                — Kokoro voice embeddings (git-ignored)
+  piper/               — Piper voice models (git-ignored)
 tests/
 docs/
   EXTERNAL_AI_SERVICE_INTEGRATION_GUIDE.md

@@ -1,21 +1,22 @@
 # local-tts-service
 
-A local Text-to-Speech service with an OpenAI-compatible API, powered by [Kokoro TTS](https://github.com/thewh1teagle/kokoro-onnx). Runs entirely on your own hardware — no cloud API keys, no CUDA, no GPU required.
+A local Text-to-Speech service with an OpenAI-compatible API, powered by [Kokoro TTS](https://github.com/thewh1teagle/kokoro-onnx) and [Piper TTS](https://github.com/rhasspy/piper). Runs entirely on your own hardware — no cloud API keys, no CUDA, no GPU required.
 
 ## Features
 
 - **OpenAI-compatible API** — drop-in replacement for OpenAI's TTS endpoint
 - **Streaming audio** — chunked transfer encoding for low-latency playback (~200ms to first audio)
-- **54 voices, 9 languages** — English, Spanish, French, Hindi, Italian, Japanese, Portuguese, Chinese
+- **55+ voices, 10 languages** — English, Spanish, French, Hindi, Italian, Japanese, Portuguese, Chinese, **Vietnamese**
+- **Multi-engine** — Kokoro for 9 languages + Piper for Vietnamese, routed automatically by voice ID
 - **Multiple output formats** — mp3, wav, opus, flac, aac, pcm
 - **Zero system dependencies** — ffmpeg is bundled via `static-ffmpeg`, no manual install needed
-- **CPU-only** — the model is 82M parameters, runs fast on any modern CPU
+- **CPU-only** — runs fast on any modern CPU, no GPU required
 - **Docker ready** — single command to build and run
 
 ## Prerequisites
 
 - Python 3.10+ (tested on 3.12)
-- ~500MB disk space (model files + dependencies)
+- ~600MB disk space (model files + dependencies)
 - Docker (optional, for containerized deployment)
 
 ## Setup
@@ -35,23 +36,35 @@ pip install -r requirements.txt
 
 ### 3. Download model files
 
-Download both files from [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0):
+**Kokoro** (9 languages, 54 voices) — from [kokoro-onnx releases](https://github.com/thewh1teagle/kokoro-onnx/releases/tag/model-files-v1.0):
 
 | File | Size | Place in |
 |------|------|----------|
 | `kokoro-v1.0.onnx` | 311 MB | `models/` |
 | `voices-v1.0.bin` | 27 MB | `voices/` |
 
+**Piper Vietnamese** (optional) — from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices):
+
+| File | Size | Place in |
+|------|------|----------|
+| `vi_VN-vais1000-medium.onnx` | 61 MB | `voices/piper/` |
+| `vi_VN-vais1000-medium.onnx.json` | 5 KB | `voices/piper/` |
+
 Using curl:
 
 ```bash
-# Download model
+# Kokoro model + voices
 curl -L -o models/kokoro-v1.0.onnx \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
-
-# Download voices
 curl -L -o voices/voices-v1.0.bin \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+
+# Piper Vietnamese (optional)
+mkdir -p voices/piper
+curl -L -o voices/piper/vi_VN-vais1000-medium.onnx \
+  https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx
+curl -L -o voices/piper/vi_VN-vais1000-medium.onnx.json \
+  https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx.json
 ```
 
 ### 4. Run the service
@@ -65,7 +78,8 @@ You should see:
 ```
 INFO:     Loading kokoro model from models/kokoro-v1.0.onnx
 INFO:     Loaded 54 voices
-INFO:     TTS engine ready
+INFO:     Loaded Piper voice: vi_VN-vais1000-medium (sample_rate=22050)
+INFO:     TTS engines ready — 55 voices available
 INFO:     Uvicorn running on http://0.0.0.0:9880
 ```
 
@@ -100,6 +114,20 @@ curl -X POST http://localhost:9880/v1/audio/speech \
     "speed": 1.0
   }' \
   --output speech.mp3
+```
+
+Vietnamese example:
+
+```bash
+curl -X POST http://localhost:9880/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "vi_VN-vais1000-medium",
+    "voice": "vi_VN-vais1000-medium",
+    "input": "Xin chào, đây là dịch vụ chuyển văn bản thành giọng nói.",
+    "response_format": "mp3"
+  }' \
+  --output speech_vi.mp3
 ```
 
 ### List Models
@@ -169,6 +197,7 @@ curl http://localhost:9880/health
 | `jf_*` / `jm_*` | Japanese | `jf_alpha`, `jf_gongitsune`, `jf_nezumi`, `jf_tebukuro`, `jm_kumo` |
 | `pf_*` / `pm_*` | Portuguese | `pf_dora`, `pm_alex`, `pm_santa` |
 | `zf_*` / `zm_*` | Chinese | `zf_xiaobei`, `zf_xiaoni`, `zf_xiaoxiao`, `zf_xiaoyi`, `zm_yunjian`, `zm_yunxi`, `zm_yunxia`, `zm_yunyang` |
+| `vi_VN-*` | Vietnamese (Piper) | `vi_VN-vais1000-medium` |
 
 ## Configuration
 
@@ -265,7 +294,7 @@ See [docs/EXTERNAL_AI_SERVICE_INTEGRATION_GUIDE.md](docs/EXTERNAL_AI_SERVICE_INT
 
 ```
 app/
-  main.py              — FastAPI app + startup lifecycle
+  main.py              — FastAPI app + engine lifecycle
   config.py            — Settings (env prefix: TTS_)
   routers/
     tts.py             — POST /v1/audio/speech
@@ -273,12 +302,15 @@ app/
     voices.py          — GET /v1/voices
     health.py          — GET /health
   services/
-    tts_engine.py      — Kokoro-ONNX wrapper
+    engine_manager.py  — Multi-engine router (voice → engine)
+    tts_engine.py      — Kokoro-ONNX wrapper (9 languages)
+    piper_engine.py    — Piper TTS wrapper (Vietnamese)
     audio_encoder.py   — PCM-to-format encoding via ffmpeg
   models/
     schemas.py         — Pydantic request/response schemas
-models/                — ONNX model weights (git-ignored)
-voices/                — Voice embedding files (git-ignored)
+models/                — Kokoro ONNX model (git-ignored)
+voices/                — Kokoro voice embeddings (git-ignored)
+  piper/               — Piper voice models (git-ignored)
 tests/
 docs/
 ```

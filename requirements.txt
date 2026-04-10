@@ -6,3 +6,4 @@ kokoro-onnx>=0.5.0
 soundfile>=0.13.0
 numpy>=2.0
 static-ffmpeg>=3.0
+piper-tts>=1.4.0

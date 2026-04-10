@@ -7,10 +7,10 @@ router = APIRouter()
 
 @router.get("/v1/voices")
 async def list_voices(request: Request) -> VoicesResponse:
-    engine = getattr(request.app.state, "tts_engine", None)
-    if engine is None:
+    manager = getattr(request.app.state, "engine_manager", None)
+    if manager is None:
         return VoicesResponse(voices=[])
 
     return VoicesResponse(
-        voices=[VoiceInfo(**v) for v in engine.get_voice_info()]
+        voices=[VoiceInfo(**v) for v in manager.get_voice_info()]
     )

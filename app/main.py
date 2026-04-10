@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.routers import tts, models, voices, health
-from app.services.tts_engine import TTSEngine
+from app.services.engine_manager import EngineManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,32 +13,35 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: load model once
-    model_path = settings.models_dir / "kokoro-v1.0.onnx"
-    voices_path = settings.voices_dir / "voices-v1.0.bin"
+    # Startup: load all engines
+    kokoro_model = settings.models_dir / "kokoro-v1.0.onnx"
+    kokoro_voices = settings.voices_dir / "voices-v1.0.bin"
+    piper_dir = settings.voices_dir / "piper"
 
-    if model_path.exists() and voices_path.exists():
-        app.state.tts_engine = TTSEngine(model_path, voices_path)
-        logger.info("TTS engine ready")
+    manager = EngineManager(
+        kokoro_model_path=kokoro_model,
+        kokoro_voices_path=kokoro_voices,
+        piper_voices_dir=piper_dir,
+    )
+
+    if manager.is_ready:
+        app.state.engine_manager = manager
+        logger.info("TTS engines ready — %d voices available", len(manager.get_voices()))
     else:
-        app.state.tts_engine = None
-        logger.warning(
-            "Model files not found. Place kokoro-v1.0.onnx in %s and voices-v1.0.bin in %s",
-            settings.models_dir,
-            settings.voices_dir,
-        )
+        app.state.engine_manager = None
+        logger.warning("No TTS engines loaded")
 
     yield
 
     # Shutdown
-    app.state.tts_engine = None
-    logger.info("TTS engine unloaded")
+    app.state.engine_manager = None
+    logger.info("TTS engines unloaded")
 
 
 app = FastAPI(
     title="local-tts-service",
     description="Local Text-to-Speech service with OpenAI-compatible API",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 

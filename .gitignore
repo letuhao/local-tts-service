@@ -13,6 +13,8 @@ models/*.safetensors
 # Voice data files
 voices/*.bin
 voices/*.pt
+voices/piper/*.onnx
+voices/piper/*.onnx.json
 
 # Generated audio output
 output/
